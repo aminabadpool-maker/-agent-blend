@@ -6,7 +6,7 @@
 #include "blend_protocol.h"
 
 #define SERVER_PORT 9090
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 4096
 
 void handle_client(int client_fd) {
     char buffer[BUFFER_SIZE];
@@ -15,9 +15,44 @@ void handle_client(int client_fd) {
         close(client_fd);
         return;
     }
+    buffer[bytes_read] = '\0';
 
-    // پاسخ ساده برای تست ارتباط ایجنت با سرور بلندر
-    const char *response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"ok\",\"service\":\"agent-blend-server\"}\n";
+    // ایجاد یک فایل اسکریپت موقت برای اجرای امن توسط بلندر
+    char script_path[] = "/tmp/agent_blend_task_XXXXXX.py";
+    int fd = mkstemp(script_path);
+    if (fd != -1) {
+        write(fd, buffer, strlen(buffer));
+        close(fd);
+    } else {
+        const char *err_msg = "Error creating temp script file\n";
+        write(client_fd, err_msg, strlen(err_msg));
+        close(client_fd);
+        return;
+    }
+
+    // ساخت دستور اجرای بلندر در حالت Headless
+    char command[512];
+    snprintf(command, sizeof(command), "blender --background --python %s 2>&1", script_path);
+
+    FILE *fp = popen(command, "r");
+    char response[BUFFER_SIZE];
+    size_t total_read = 0;
+    if (fp) {
+        size_t r;
+        while ((r = fread(response + total_read, 1, sizeof(response) - total_read - 1, fp)) > 0) {
+            total_read += r;
+            if (total_read >= sizeof(response) - 1) break;
+        }
+        pclose(fp);
+        response[total_read] = '\0';
+    } else {
+        strcpy(response, "Error executing blender process\n");
+    }
+
+    // پاکسازی فایل موقت
+    unlink(script_path);
+
+    // ارسال خروجی بلندر به کلاینت (ایجنت)
     write(client_fd, response, strlen(response));
     close(client_fd);
 }
@@ -34,7 +69,7 @@ int main(void) {
 
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY); // گوش دادن روی تمام اینترفیس‌ها برای سرور
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons(SERVER_PORT);
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
@@ -49,7 +84,7 @@ int main(void) {
         return 1;
     }
 
-    printf("[+] -agent-blend server daemon active on port %d...\n", SERVER_PORT);
+    printf("[+] -agent-blend server daemon with Blender backend active on port %d...\n", SERVER_PORT);
 
     while (1) {
         int client_fd = accept(server_fd, NULL, NULL);
