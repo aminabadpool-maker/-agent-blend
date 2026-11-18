@@ -1,12 +1,15 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -Iinclude
 
-all: server
+all: server client
 
 server: src/server.c
 	$(CC) $(CFLAGS) -O3 src/server.c -o agent_blend_server
 
-clean:
-	rm -f agent_blend_server *.o
+client: src/client.c
+	$(CC) $(CFLAGS) -O3 src/client.c -o agent_blend_cli
 
-.PHONY: all server clean
+clean:
+	rm -f agent_blend_server agent_blend_cli *.o
+
+.PHONY: all server client clean
